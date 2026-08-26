@@ -299,9 +299,12 @@ impl LsmStorageInner {
 
     /// Get a key from the storage. In day 7, this can be further optimized by using a bloom filter.
     pub fn get(&self, key: &[u8]) -> Result<Option<Bytes>> {
-        let guard = self.state.read();
+        let snapshot = {
+            let guard = self.state.read();
+            Arc::clone(&guard)
+        };
 
-        if let Some(value) = guard.memtable.get(key) {
+        if let Some(value) = snapshot.memtable.get(key) {
             if value.is_empty() {
                 return Ok(None);
             } else {
@@ -309,7 +312,7 @@ impl LsmStorageInner {
             }
         }
 
-        for table in guard.imm_memtables.iter() {
+        for table in snapshot.imm_memtables.iter() {
             if let Some(value) = table.get(key) {
                 if value.is_empty() {
                     return Ok(None);
@@ -336,7 +339,9 @@ impl LsmStorageInner {
 
         if size >= self.options.target_sst_size {
             let state_lock = self.state_lock.lock();
-            if self.state.read().memtable.approximate_size() >= self.options.target_sst_size {
+            let guard = self.state.read();
+            if guard.memtable.approximate_size() >= self.options.target_sst_size {
+                drop(guard);
                 self.force_freeze_memtable(&state_lock)?;
             }
         }
